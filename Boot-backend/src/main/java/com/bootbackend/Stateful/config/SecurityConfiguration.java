@@ -1,6 +1,6 @@
-package com.bootbackend.config;
+/**package com.bootbackend.Stateful.config;
 
-import com.bootbackend.tool.rest.RestBean17;
+import com.bootbackend.Stateful.tool.rest.RestBean17;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.context.annotation.Bean;
@@ -8,13 +8,13 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.web.SecurityFilterChain;
 import org.springframework.web.cors.CorsConfiguration;
 import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
 
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.nio.file.AccessDeniedException;
 
 @Configuration
 public class SecurityConfiguration {
@@ -28,9 +28,13 @@ public class SecurityConfiguration {
                 })
                 .formLogin(conf -> {
                     conf.loginProcessingUrl("/api/auth/login");
-                    conf.failureHandler(this::onAuthenticationFailure);
-                    conf.successHandler(this::onAuthenticationSuccess);
+                    conf.failureHandler(this::handleProcess);
+                    conf.successHandler(this::handleProcess);
                     conf.permitAll();
+                })
+                .exceptionHandling(conf -> {
+                    conf.accessDeniedHandler(this::handleProcess);
+                    conf.authenticationEntryPoint(this::handleProcess);
                 })
                 .cors(conf -> {
                     CorsConfiguration cors = new CorsConfiguration();
@@ -45,26 +49,20 @@ public class SecurityConfiguration {
 
     }
 
-    private void onAuthenticationFailure(HttpServletRequest request,
-                                         HttpServletResponse response,
-                                         AuthenticationException exception) throws IOException {
+    private void handleProcess(HttpServletRequest request,
+                               HttpServletResponse response,
+                               Object exceptionOrAuthentication) throws IOException {
 
         response.setContentType("application/json;charset=utf-8");
-
         PrintWriter writer = response.getWriter();
-        writer.write(RestBean17.failure(401, exception.getMessage()).asJsonString());
+
+        if (exceptionOrAuthentication instanceof AccessDeniedException e)
+            writer.write(RestBean17.failure(403, e.getMessage()).asJsonString());
+        else if (exceptionOrAuthentication instanceof Exception e)
+            writer.write(RestBean17.failure(401, e.getMessage()).asJsonString());
+        else if (exceptionOrAuthentication instanceof Authentication authentication)
+            writer.write(RestBean17.success(authentication.getName()).asJsonString());
 
     }
 
-    private void onAuthenticationSuccess(HttpServletRequest request,
-                                         HttpServletResponse response,
-                                         Authentication authentication) throws IOException {
-
-        response.setContentType("application/json;charset=utf-8");
-
-        PrintWriter writer = response.getWriter();
-        writer.write(RestBean17.success(authentication.getName()).asJsonString());
-
-    }
-
-}
+}**/
