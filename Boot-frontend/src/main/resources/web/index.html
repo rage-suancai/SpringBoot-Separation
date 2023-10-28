@@ -21,6 +21,8 @@
     <link rel="stylesheet" type="text/css" href="static/css/icofont.min.css">
     <link rel="stylesheet" type="text/css" href="static/css/style.css">
 	<link rel="stylesheet" id="theme-change" type="text/css" href="">
+
+    <script src="https://unpkg.com/axios@1.1.2/dist/axios.min.js"></script>
 </head>
 
 <body>
@@ -265,7 +267,7 @@
                             </a>
                             <div class="user-info-box">
                                 <div class="drop-down-header">
-                                    <h4>John Brown</h4>
+                                    <h4 id="username">---</h4>
                                     <p>UI | UX Designer</p>
                                 </div>
                                 <ul>
@@ -1722,3 +1724,13 @@
 </body>
 
 </html>
+
+<script>
+
+    axios.get('http://localhost:8081/api/account/name', {
+        withCredentials: true
+    }).then(({data}) => {
+        document.getElementById('username').innerText = data.data
+    })
+
+</script>

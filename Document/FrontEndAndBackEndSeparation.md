@@ -304,12 +304,428 @@
                     
                         @GetMapping("/name")
                         public RestBean<String> username() {
+                            
                             User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
                             return RestBean.success(user.getUsername());
+                            
                         }
                         
                     }
 ```
+
+这样前端就可以在登陆之后获取到这个接口的结果了 注意一定要在请求时携带Cookie 否则服务器无法识别身份 会直接被拦截并重定向:
+
+```javascript
+                    <script>
+    
+                        axios.get('http://localhost:8081/api/user/name', {
+                            withCredentials: true // 携带Cookie访问 不然服务器不认识我们
+                        }).then(({data}) => {
+                            document.getElementById('username').innerText = data.data
+                        })
+    
+                    </script>
+```
+
+注意一定要登录之后再请求 成功的请求结果如下:
+
+<img src="https://image.itbaima.net/markdown/2023/07/24/L4PcVKpO2nmHG7e.png"/>
+
+不过我们发现 我们的一些响应还是不完善 比如用户没有登录 默认还是会302重定向 但是实际上我们只需要告诉前端没有登录就行了 所以说我们修改一下未登录状态下返回的结果:
+
+```java
+                    @Bean
+                    public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+    
+                        return http
+                                ...
+                                .exceptionHandling(conf -> {
+                                  	// 配置授权相关异常处理器
+                                    conf.accessDeniedHandler(this::onAccessDeny);
+                                  	// 配置验证相关异常的处理器
+                                    conf.authenticationEntryPoint(this::onAuthenticationFailure);
+                                })
+                                .build();
+                        
+                    }
+```
+
+现在有三个方法 但是实际上功能都是一样的 我们可以把它们整合为同一个方法:
+
+```java
+                    private void handleProcess(HttpServletRequest request,
+                                               HttpServletResponse response,
+                                               Object exceptionOrAuthentication) throws IOException {
+    
+                        response.setContentType("application/json;charset=utf-8");
+                        PrintWriter writer = response.getWriter();
+                        if(exceptionOrAuthentication instanceof AccessDeniedException exception) {
+                            writer.write(RestBean.failure(403, exception.getMessage()).asJsonString());
+                        } else if(exceptionOrAuthentication instanceof Exception exception) {
+                            writer.write(RestBean.failure(401, exception.getMessage()).asJsonString());
+                        } else if(exceptionOrAuthentication instanceof Authentication authentication){
+                            writer.write(RestBean.success(authentication.getName()).asJsonString());
+                        }
+                        
+                    }
+```
+
+这样 用户在没有登录的情况下 请求接口就会返回我们的自定义JSON信息了:
+
+<img src="https://image.itbaima.net/markdown/2023/07/24/Rf9BSVLvih1lOE2.png"/>
+
+对于我们页面中的一些常见的异常 我们也可以编写异常处理器来将其规范化返回 比如404页面 我们可以直接配置让其抛出异常:
+
+```yaml
+                    spring:
+                       mvc:
+                         throw-exception-if-no-handler-found: true
+                       web:
+                         resources:
+                           add-mappings: false
+```
+
+然后编写异常处理器:
+
+```java
+                    @RestController
+                    @ControllerAdvice
+                    public class ExceptionController {
+                    
+                        @ExceptionHandler(Exception.class)
+                        public RestBean<String> error(Exception e){
+                            
+                            if(e instanceof NoHandlerFoundException exception) // 这里就大概处理一下404就行
+                                return RestBean.failure(404, e.getMessage());  
+                            else if (e instanceof ServletException exception) // 其他的Servlet异常就返回400状态码
+                                return RestBean.failure(400, e.getMessage());
+                            else
+                                return RestBean.failure(500, e.getMessage()); // 其他异常直接返回500
+                            
+                        }
+                        
+                    }
+```
+
+这样我们的后端就返回的是非常统一的JSON格式数据了 前端开发人员只需要根据我们返回的数据编写统一的处理即可
+基于Session的前后端分离实现起来也是最简单的 几乎没有多少的学习成本 跟我们之前的使用是一样的 只是现在前端单独编写了而已
+
+### 基于Token的分离(无状态)
+基于Token的前后端分离主打无状态 无状态服务是指在处理每个请求时 服务本身不会维持任何与请求相关的状态信息 每个请求被视为独立的,自包含的操作
+服务只关注处理请求本身 而不关心前后请求之间的状态变化 也就是说 用户在发起请求时 服务器不会记录其信息 而是通过用户携带的Token信息来判断是哪一个用户:
+- 有状态: 用户请求接口 -> 从Session中读取用户信息 -> 根据当前的用户来处理业务 -> 返回
+- 无状态: 用户携带Token请求接口 -> 从请求中获取用户信息 -> 根据当前的用户来处理业务 -> 返回
+
+无状态服务的优点包括:
+1. 服务端无需存储会话信息: 传统的会话管理方式需要服务端存储用户的会话信息 包括用户身份认证信息和会话状态 每个请求被视为独立的 自包含的操作 服务只关注处理请求本身
+                       而不关心前后请求之间的状态变化 也就是说 用户在发起请求时 服务器不会记录其信息 而是通过用户携带的Token信息来判断是哪一个用户
+
+
+2. 减少网络延迟: 传统的会话管理方式需要在每次请求中都携带会话标识 即使是无状态的RESTful API也需要携带身份认证信息 而使用Token
+               身份认证信息已经包含在Token中 只需要在请求的Authorizerion头部携带Token即可 减少了每次请求的数据量 减少了网络延迟
+
+
+3. 客户端无需存储会话信息: 传统的会话管理方式中 客户端需要存储会话标识 以便在每次请求中携带 而使用Token 客户端只需要保存Token即可 方便了客户端的存储和管理
+
+
+4. 跨域支持: Token可以在各个不同的域名之间进行传递和使用 因为Token是通过签名来验证和保护数据完整性的 可以防止未经授权的修改
+
+这一部分 我们将深入学习目前比较主流的基于Token的前后端分离方案
+
+#### 认识JWT令牌
+在认识Token前后端分离之前 我们需要先学习 最常见的JWT令牌 官网: https://jwt.io
+
+JSON Web Tokens令牌(JWT)是一个开放标准(RFC 7519) 它定义了一种紧凑和自成一体的方式 用于在各方之间作为JSON对象安全地传输信息
+这些信息可以被验证和信任 因为它是数字签名的 JWT可以使用密钥(使用HMAC算法) 或使用RSA或ECDSA进行公钥/私钥对进行签名
+
+JWT令牌的格式如下:
+
+<img src="https://image.itbaima.net/markdown/2023/03/07/Xu8lxYhKoJNr6it.png"/>
+
+一个JWT令牌由3部分组成: 标头(Header),有效载荷(Payload)和签名(Signature) 在传输的时候 会将JWT的前2部分分别进行Base64编码后用进行连接形成最终需要传输的字符串
+- 标头: 包含一些元数据信息 比如JWT签名所使用的加密算法 还有类型 这里统一都是JWT
+
+
+- 有效载荷: 包括用户名称,令牌发布时间,过期时间,JWT ID等 当然我们也可以自定义添加字段 我们的用户信息一般都在这里存放
+
+
+- 签名: 首先需要指定一个密钥 该密钥仅仅保存在服务器中 保证不能让其他用户知道 然后使用Header中指定的算法对Header和Payload进行base64加密之后的结果通过密钥计算哈希值 然后就得出一个签名哈希 这个会用于之后验证内容是否被篡改
+
+这里还是补充一下一些概念 因为很多东西都是我们之前没有接触过的:
+- Base64: 就是包括小写字母a-z,大写字母A-Z,数字0-9,符号"+","/" 一共64个字符的字符集(末尾还有1个或多个=用来凑够字节数)
+          任何的符号都可以转换成这个字符集中的字符 这个转换过程就叫做Base64编码 编码之后会生成只包含上述64个字符的字符串
+          相反 如果需要原本的内容 我们也可以进行Base64解码 回到原有的样子
+
+```java
+                    public void test(){
+                    
+                        String str = "你们可能不知道只用20万赢到578万是什么概念";
+                      	// Base64不只是可以对字符串进行编码 任何byte[]数据都可以 编码结果可以是byte[]也可以是字符串
+                        String encodeStr = Base64.getEncoder().encodeToString(str.getBytes());
+                        System.out.println("Base64编码后的字符串: " + encodeStr);
+                    
+                        System.out.println("解码后的字符串: " + new String(Base64.getDecoder().decode(encodeStr)));
+                        
+                    }
+```
+
+注意Base64不是加密算法 只是一种信息的编码方式而已
+
+- 加密算法: `加密算法分为对称加密和非对称加密` 其中对称加密(Symmetric Cryptography)比较好理解 就像一把锁配了两把钥匙一样 两把钥匙你和别人都有一把
+            然后你们直接传递数据 都会把数据用锁给锁上 就算传递的途中有人把数据窃取了 也没办法解密 因为钥匙只有你和对方有 没有钥匙无法进行解密 但是这样有个问题
+            既然解密的关键在于钥匙本身 那么如果有人不仅窃取了数据 而且对方那边的治安也不好 于是顺手就偷走了钥匙 那你们之间发的数据不就凉凉了吗
+
+
+
+- 非对称加密: 因此 非对称加密(Asymmetric Cryptography)算法出现了 它并不是直接生成一把钥匙 而是生成一个公钥和一个私钥 私钥只能由你保管 而公钥交给对方或是你要发送的任何人都行
+            现在你需要把数据传给对方 那么就需要使用私钥进行加密 但是 这个数据只能使用对应的公钥进行解密 相反 如果对方需要给你发送数据 那么就需要用公钥进行加密
+            而数据只能使用私钥进行解密 这样的话就算对方的公钥被窃取 那么别人发给你的数据也没办法解密出来 因为需要私钥才能解密 而只有你才有私钥
+
+因此 非对称加密的安全性会更高一些 包括HTTPS的隐私信息正是使用非对称加密来保障传输数据的安全(当然HTTPS并不是单纯地使用非对称加密完成的 感兴趣的可以去了解一下)
+
+对称加密和非对称加密都有很多的算法 比如对称加密 就有: DES,IDEA,RC2 非对称加密有: RSA,DAS,ECC
+
+- 不可逆加密算法: 常见的不可逆加密算法有MD5,HMAC,SHA-1,SHA-224,SHA-256,SHA-384,和SHA-512 其中SHA-224,HSA-256,SHA-384,和SHA-512我们可以统称为SHA2加密算法
+                SHA加密算法的安全性要比MD5更高 而SHA2加密算法比SHA1的要高 其中SHA后面的数字表示的是加密后的字符串长度 SHA1默认会产生一个160位的信息摘要
+                经过不可逆加密算法得到的加密结果 是无法解密回去的 也就是说加密出来是什么就是什么了 本质上 其就是一种哈希函数 用于对一段信息产生摘要 以防止被篡改
+
+实际上这种算法就常常被用作信息摘要计算 同样的数据通过同样的算法计算得到的结果肯定也一样 而如果数据被修改 那么计算的结果肯定就不一样了
+
+因此 JWT令牌实际上是一种经过加密的JSON数据 其中包含了用户名字,用户ID等信息 我们可以直接解密JWT令牌得到用户的信息 我们可以写一个小测试来看看 导入JWT支持库依赖:
+
+```xml
+                    <dependency>
+                         <groupId>com.auth0</groupId>
+                         <artifactId>java-jwt</artifactId>
+                         <version>4.3.0</version>
+                    </dependency>
+```
+
+要生成一个JWT令牌非常简单:
+
+```java
+                    public class Main {
+    
+                        public static void main(String[] args) {
+                            
+                            String jwtKey = "abcdefghijklmn"; // 使用一个JWT秘钥进行加密
+                            Algorithm algorithm = Algorithm.HMAC256(jwtKey); // 创建HMAC256加密算法对象
+                            String jwtToken = JWT.create()
+                                    .withClaim("id", 1) // 向令牌中塞入自定义的数据
+                                    .withClaim("name", "lbw")
+                                    .withClaim("role", "nb")
+                                    .withExpiresAt(new Date(2024, Calendar.FEBRUARY, 1)) // JWT令牌的失效时间
+                                    .withIssuedAt(new Date()) // JWT令牌的签发时间
+                                    .sign(algorithm); // 使用上面的加密算法进行加密 完成签名
+                            System.out.println(jwtToken); // 得到最终的JWT令牌
+                            
+                        }
+                        
+                    }
+```
+
+可以看到最后得到的JWT令牌就长这样:
+
+    eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoibmIiLCJuYW1lIjoibGJ3IiwiaWQiOjEsImV4cCI6NjE2NjQ4NjA4MDAsImlhdCI6MTY5MDEzMTQ3OH0.KUuGKM0OynL_DEUnRIETDBlmGjoqbt_5dP2r21ZDE1s
+
+我们可以使用Base64将其还原为原本的样子:
+
+```java
+                    public static void main(String[] args) {
+    
+                            String jwtToken = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoibmIiLCJuYW1lIjoibGJ3IiwiaWQiOjEsImV4cCI6NjE2NjQ4NjA4MDAsImlhdCI6MTY5MDEzMTQ3OH0.KUuGKM0OynL_DEUnRIETDBlmGjoqbt_5dP2r21ZDE1s";
+                            String[] split = jwtToken.split("\\.");
+                            for (int i = 0; i < split.length - 1; i++) {
+                                String s = split[i];
+                                byte[] decode = Base64.getDecoder().decode(s);
+                                System.out.println(new String(decode));
+                            }
+                            
+                    }
+```
+
+解析前面两个部分得到:
+
+    {"typ":"JWT","alg":"HS256"}
+    {"role":"nb","name":"lbw","id":1,"exp":61664860800,"iat":1690131478}
+
+可以看到确实是经过Base64加密的JSON格式数据 包括我们的自定义数据也在其中 而我们可以直接使用JWT令牌来作为我们权限校验的核心 我们可以像这样设计我们的系统:
+
+<img src="https://image.itbaima.net/markdown/2023/07/24/4bThtMwA9XsP5uc.png"/>
+
+首先用户还是按照正常流程进行登录 只不过用户在登录成功之后 服务端会返回一个JWT令牌用于后续请求使用 由于JWT令牌具有时效性 所以说当过期之后又需要重新登录
+就像我们进入游乐园需要一张门票一样 只有持有游乐园门票才能进入游乐园游玩 如果没有门票就会被拒之门外 而游乐园门票也有时间限制 如果已经过期 我们也是没有办法进入游乐园的
+
+所以 我们只需要在后续请求中携带这个Token即可(可以放在Cookie中 也可以放在请求头中) 这样服务器就可以直接从Token中解密读取到我们用户的相关信息以及判断用户是否登录过期了
+
+不过这个时候会有小伙伴疑问 既然现在用户信息都在JWT中 那要是用户随便修改里面的内容 岂不是可以以任意身份访问服务器了? 这会不会存在安全隐患?
+对于这个问题 前面我们已经说的很清楚了 JWT实际上最后会有一个加密的签名 这个是根据秘钥+JWT本体内容计算得到的 用户在没有持有秘钥的情况下
+是不可能计算得到正确的签名的 所以说服务器会在收到JWT时对签名进行重新计算 比较是否一致 来验证JWT是否被用户恶意修改 如果被修改肯定也是不能通过的
+
+<img src="https://image.itbaima.net/markdown/2023/07/24/17dmiHXEG4rLO6W.png"/>
+
+#### SpringSecurity实现JWT校验
+前面我们介绍了JWT的基本原理以及后端的基本校验流程 那么我们现在就来看看如何实现这样的流程
+
+pringSecurity中并没有为我们提供预设的JWT校验模块(只有OAuth2模块才有 但是知识太超前了 我们暂时不讲解)这里我们只能手动进行整合 JWT可以存放在Cookie或是请求头中
+不过不管哪种方式 我们都可以通过Request获取到对应的JWT令牌 这里我们使用比较常见的请求头携带JWT的方案 客户端发起的请求中会携带这样的的特殊请求头:
+
+    Authorization: Bearer eyJhbGciOiJSUzI1NiJ9.eyJpc3MiOiJzZWxmIiwic3ViIjoidXNlciIsImV4cCI6MTY5MDIxODE2NCwiaWF0IjoxNjkwMTgyMTY0LCJzY29wZSI6ImFwcCJ9.Z5-WMeulZyx60WeNxrQg2z2GiVquEHrsBl9V4dixbRkAD6rFp-6gCrcAXWkebs0i-we4xTQ7TZW0ltuhGYZ1GmEaj4F6BP9VN8fLq2aT7GhCJDgjikaTs-w5BbbOD2PN_vTAK_KeVGvYhWU4_l81cvilJWVXAhzMtwgPsz1Dkd04cWTCpI7ZZi-RQaBGYlullXtUrehYcjprla8N-bSpmeb3CBVM3kpAdehzfRpAGWXotN27PIKyAbtiJ0rqdvRmvlSztNY0_1IoO4TprMTUr-wjilGbJ5QTQaYUKRHcK3OJrProz9m8ztClSq0GRvFIB7HuMlYWNYwf7lkKpGvKDg
+
+这里的Authorization请求头就是携带JWT的专用属性 值的格式为"Bearer Token" 前面的Bearer代表身份验证方式 默认情况下有两种:
+
+    Basic和Bearer是两种不同的身份验证方式
+
+    Basic是一种基本的身份验证方式 它将用户名和密码进行base64编码后 放在Authorization请求头中
+    用于向服务器验证用户身份 这种方式不够安全 因为它将密码以明文的形式传输 容易受到中间人攻击
+
+    Bearer是一种更安全的身份验证方式 它基于令牌(Token)来验证用户身份 Bearer令牌是由身份验证服务器颁发给客户端的 客户端在每个请求中将令牌放在Authorization请求头的Bearer字段中
+    服务器会验证令牌的有效性和权限 以确定用户的身份 Bearer令牌通常使用JSON Web Token(JWT)的形式进行传递和验证
+
+一会我们会自行编写JWT校验拦截器来处理这些信息
+
+首先我们先把用于处理JWT令牌的工具类完成一下:
+
+```java
+                    public class JwtUtils {
+    
+                      	// Jwt秘钥
+                        private static final String key = "abcdefghijklmn";
+                    
+                      	// 根据用户信息创建Jwt令牌
+                        public static String createJwt(UserDetails user){
+                            
+                            Algorithm algorithm = Algorithm.HMAC256(key);
+                            Calendar calendar = Calendar.getInstance();
+                            Date now = calendar.getTime();
+                            calendar.add(Calendar.SECOND, 3600 * 24 * 7);
+                            return JWT.create()
+                                    .withClaim("name", user.getUsername()) // 配置JWT自定义信息
+                                    .withClaim("authorities", user.getAuthorities().stream().map(GrantedAuthority::getAuthority).toList())
+                                    .withExpiresAt(calendar.getTime()) // 设置过期时间
+                                    .withIssuedAt(now) // 设置创建创建时间
+                                    .sign(algorithm); // 最终签名
+                            
+                        }
+                    
+                      	// 根据Jwt验证并解析用户信息
+                        public static UserDetails resolveJwt(String token) {
+                            
+                            Algorithm algorithm = Algorithm.HMAC256(key);
+                            JWTVerifier jwtVerifier = JWT.require(algorithm).build();
+                            try {
+                                DecodedJWT verify = jwtVerifier.verify(token); // 对JWT令牌进行验证 看看是否被修改
+                                Map<String, Claim> claims = verify.getClaims(); // 获取令牌中内容
+                                if(new Date().after(claims.get("exp").asDate())) // 如果是过期令牌则返回null
+                                    return null;
+                                else
+                                  	// 重新组装为UserDetails对象 包括用户名,授权信息等
+                                    return User
+                                            .withUsername(claims.get("name").asString())
+                                            .password("")
+                                            .authorities(claims.get("authorities").asArray(String.class))
+                                            .build();
+                            } catch (JWTVerificationException e) {
+                                return null;
+                            }
+                            
+                        }
+                        
+                    }
+```
+
+接着我们需要自行实现一个JwtAuthenticationFilter加入到SpringSecurity默认提供的过滤器链(有关SpringSecurity的实现原理介绍 我们在SSM中已经详细讲解过 各位小伙伴可以回顾一下)中 用于处理请求头中携带的JWT令牌 并配置登录状态:
+
+```java
+                    public class JwtAuthenticationFilter extends OncePerRequestFilter {  
+                        // 继承OncePerRequestFilter表示每次请求过滤一次 用于快速编写JWT校验规则
+                    
+                        @Override
+                        protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) throws ServletException, IOException {
+                          	
+                            // 首先从Header中取出JWT
+                            String authorization = request.getHeader("Authorization");
+                          	// 判断是否包含JWT且格式正确
+                            if (authorization != null && authorization.startsWith("Bearer ")) {
+                                String token = authorization.substring(7);	
+                              	// 开始解析成UserDetails对象 如果得到的是null说明解析失败 JWT有问题
+                                UserDetails user = JwtUtils.resolveJwt(token);
+                                if(user != null) {
+                                  	// 验证没有问题 那么就可以开始创建Authentication了 这里我们跟默认情况保持一致
+                                  	// 使用UsernamePasswordAuthenticationToken作为实体 填写相关用户信息进去
+                                    UsernamePasswordAuthenticationToken authentication =
+                                            new UsernamePasswordAuthenticationToken(user, null, user.getAuthorities());
+                                    authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                                  	// 然后直接把配置好的Authentication塞给SecurityContext表示已经完成验证
+                                    SecurityContextHolder.getContext().setAuthentication(authentication);
+                                }
+                            }
+                          	// 最后放行 继续下一个过滤器
+                          	// 可能各位小伙伴会好奇 要是没验证成功不是应该拦截吗? 这个其实没有关系的
+                          	// 因为如果没有验证失败上面是不会给SecurityContext设置Authentication的 后面直接就被拦截掉了
+                          	// 而且有可能用户发起的是用户名密码登录请求 这种情况也要放行的 不然怎么登录 所以说直接放行就好
+                            filterChain.doFilter(request, response);
+                            
+                        }
+                        
+                    }
+```
+
+最后我们来配置一下SecurityConfiguration配置类 其实配置方法跟之前还是差不多 用户依然可以使用表单进行登录 并且登录方式也是一样的 就是有两个新增的部分需要我们注意一下:
+
+```java
+                    @Configuration
+                    public class SecurityConfiguration {
+                    
+                        @Bean
+                        public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
+                            
+                            return http
+                              		// 其他跟之前一样 就省略掉了
+                                    ...  
+                                    // 将Session管理创建策略改成无状态 这样SpringSecurity就不会创建会话了 也不会采用之前那套机制记录用户 因为现在我们可以直接从JWT中获取信息
+                                    .sessionManagement(conf -> {
+                                        conf.sessionCreationPolicy(SessionCreationPolicy.STATELESS);
+                                    })
+                              		// 添加我们用于处理JWT的过滤器到Security过滤器链中 注意要放在UsernamePasswordAuthenticationFilter之前
+                                    .addFilterBefore(new JwtAuthenticationFilter(), UsernamePasswordAuthenticationFilter.class)
+                                    .build();
+                            
+                        }
+                    
+                      	// 这个跟之前一样的写 整合到一起处理 统一返回JSON格式
+                        private void handleProcess(HttpServletRequest request,
+                                                   HttpServletResponse response,
+                                                   Object exceptionOrAuthentication) throws IOException {
+                            
+                            response.setContentType("application/json;charset=utf-8");
+                            PrintWriter writer = response.getWriter();
+                            if(exceptionOrAuthentication instanceof AccessDeniedException exception) {
+                                writer.write(RestBean.failure(403, exception.getMessage()).asJsonString());
+                            } else if(exceptionOrAuthentication instanceof AuthenticationException exception) {
+                                writer.write(RestBean.failure(401, exception.getMessage()).asJsonString());
+                            } else if(exceptionOrAuthentication instanceof Authentication authentication){
+                              	// 不过这里需要注意 在登录成功的时候需要返回我们生成的JWT令牌 这样客户端下次访问就可以携带这个令牌了 令牌过期之后就需要重新登录才可以
+                                writer.write(RestBean.success(JwtUtils.createJwt((User) authentication.getPrincipal())).asJsonString());
+                            }
+                            
+                        }
+                        
+                    }
+```
+
+最后我们创建一个测试使用的Controller来看看效果:
+
+
+
+
+
+
+
+
+
+
+
 
 
 

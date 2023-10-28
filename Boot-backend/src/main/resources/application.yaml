@@ -17,4 +17,10 @@ spring:
         - admin
         - user
 
+  mvc:
+    throw-exception-if-no-handler-found: true
+  web:
+    resources:
+      add-mappings: false
+
 
