@@ -282,7 +282,7 @@
                                         </a>
                                     </li>
                                     <li>
-                                        <a href="login.html">
+                                        <a href="javascript:logout();">
                                             <i class="fas fa-sign-out-alt"></i> logout
                                         </a>
                                     </li>
@@ -1727,10 +1727,21 @@
 
 <script>
 
-    axios.get('http://localhost:8081/api/account/name', {
+    /*axios.get('http://localhost:8081/api/account/name', {
         withCredentials: true
     }).then(({data}) => {
         document.getElementById('username').innerText = data.data
+    })*/
+
+    axios.get('http://localhost:8081/api/account/name', {
+        headers: { 'Authorization': "Bearer " + sessionStorage.getItem("access_token") }
+    }).then(({data}) => {
+        document.getElementById('username').innerText = data.data
     })
+
+    function logout() {
+        sessionStorage.removeItem("account_token")
+        window.location.href = '/login.html'
+    }
 
 </script>

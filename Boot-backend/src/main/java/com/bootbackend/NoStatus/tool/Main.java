@@ -13,7 +13,8 @@ public class Main {
 
         //jwtEncrypt("abcABC.12345");
 
-        base64Teardown("eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoibmIiLCJuYW1lIjoibGJ3IiwiaWQiOjEsImV4cCI6NjE2MzQxODg4MDAsImlhdCI6MTY5ODUxNzM2OX0.gRDxUtN-HemDvu8o6DcNQHTtl7lKggP-tqRNAZdVGMw");
+        // eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJyb2xlIjoibmIiLCJuYW1lIjoibGJ3IiwiaWQiOjEsImV4cCI6NjE2MzQxODg4MDAsImlhdCI6MTY5ODUxNzM2OX0.gRDxUtN-HemDvu8o6DcNQHTtl7lKggP-tqRNAZdVGMw
+        base64Teardown("eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJuYW1lIjoiYWRtaW4iLCJleHAiOjE2OTg5OTkxNDQsImlhdCI6MTY5ODczOTk0NCwiYXV0aG9yaXRpZXMiOlsiUk9MRV9hZG1pbiIsIlJPTEVfdXNlciJdfQ.QQK_mwr5C6ud5_tv_PHlFScSvmaFhZW31pkWe__wLRA");
 
     }
 

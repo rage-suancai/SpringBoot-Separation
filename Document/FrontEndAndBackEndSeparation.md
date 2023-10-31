@@ -393,7 +393,7 @@
                     public class ExceptionController {
                     
                         @ExceptionHandler(Exception.class)
-                        public RestBean<String> error(Exception e){
+                        public RestBean<String> error(Exception e) {
                             
                             if(e instanceof NoHandlerFoundException exception) // 这里就大概处理一下404就行
                                 return RestBean.failure(404, e.getMessage());  
@@ -457,7 +457,7 @@ JWT令牌的格式如下:
           相反 如果需要原本的内容 我们也可以进行Base64解码 回到原有的样子
 
 ```java
-                    public void test(){
+                    public void test() {
                     
                         String str = "你们可能不知道只用20万赢到578万是什么概念";
                       	// Base64不只是可以对字符串进行编码 任何byte[]数据都可以 编码结果可以是byte[]也可以是字符串
@@ -593,7 +593,7 @@ pringSecurity中并没有为我们提供预设的JWT校验模块(只有OAuth2模
                         private static final String key = "abcdefghijklmn";
                     
                       	// 根据用户信息创建Jwt令牌
-                        public static String createJwt(UserDetails user){
+                        public static String createJwt(UserDetails user) {
                             
                             Algorithm algorithm = Algorithm.HMAC256(key);
                             Calendar calendar = Calendar.getInstance();
@@ -715,6 +715,247 @@ pringSecurity中并没有为我们提供预设的JWT校验模块(只有OAuth2模
 ```
 
 最后我们创建一个测试使用的Controller来看看效果:
+
+```java
+                    @RestController
+                    public class TestController {
+                    
+                        @GetMapping("/test")
+                        public String test(){
+                            return "Hello World";
+                        }
+                        
+                    }
+```
+
+那么现在采用JWT之后 我们要怎么使用呢? 首先我们还是使用工具来测试一下:
+
+<img src="https://image.itbaima.net/markdown/2023/07/24/L1O8m6auYc2IFWR.png"/>
+
+登录成功之后 可以看到现在返回给我们了一个JWT令牌 接着我们就可以使用这个令牌了 比如现在我们要访问某个接口获取数据 那么就可以携带这个令牌进行访问:
+
+<img src="https://image.itbaima.net/markdown/2023/07/24/Hn7X5qeDf9htk6P.png"/>
+
+注意需要在请求头中添加:
+
+    Authorization: Bearer 刚刚获取的Token
+
+如果以后没有登录或者携带一个错误的JWT访问服务器 都会返回401错误:
+
+<img src="https://image.itbaima.net/markdown/2023/07/24/ID96yY7lkr5VsPS.png"/>
+
+我们现在来模拟一下前端操作:
+
+```javascript
+                    <script>
+    
+                      	// 其他都是跟之前一样的
+                        function getInfo() {
+                            axios.post('http://localhost:8081/api/auth/login', {
+                                username: document.getElementById('username').value,
+                                password: document.getElementById('password').value
+                            }, {
+                                headers: {
+                                    'Content-Type': 'application/x-www-form-urlencoded'
+                                }
+                            }).then(({data}) => {
+                                if(data.code === 200) {
+                                    // 将得到的JWT令牌存到sessionStorage用于本次会话
+                                    sessionStorage.setItem("access_token", data.data)
+                                    window.location.href = '/index.html'
+                                } else {
+                                    alert('登录失败：'+data.message)
+                                }
+                            })
+                        }
+                        
+                    </script>
+```
+
+接着是首页 获取信息的时候携带上JWT即可 不需要依赖Cookie了:
+
+```javascript
+                    <script>
+    
+                        axios.get('http://localhost:8081/api/user/name', {
+                            headers: {
+                                'Authorization': "Bearer "+sessionStorage.getItem("access_token")
+                            }
+                        }).then(({data}) => {
+                            document.getElementById('username').innerText = data.data
+                        })
+    
+                    </script>
+```
+
+这样我们就实现了基于SpringSecurity的JWT校验 整个流程还是非常清晰的
+
+#### 退出登录JWT处理
+虽然我们使用JWT已经很方便了 但是有一个很严重的问题就是 我们没办法像Session那样去踢用户下线 什么意思呢? 我们之前可以使用退出登录接口直接退出
+用户Session中的验证信息也会被销毁 但是现在是无状态的 用户来管理Token令牌 服务端只认Token是否合法 那么这个时候怎么让用户正确退出登录呢?
+
+首先我们从最简单的方案开始 我们可以直接让客户端删除自己的JWT令牌 这样不就相当于退出登录了吗 这样甚至不需要请求服务器 自己就退了:
+
+```javascript
+                    <script>
+                    		...
+                      
+                        function logout() {
+                            // 直接删除存在sessionStorage中的JWT令牌
+                            sessionStorage.removeItem("access_token")
+                            // 然后回到登录界面
+                            window.location.href = '/login.html'
+                        }
+                        
+                    </script>
+```
+
+这样虽然是最简单粗暴的 但是存在一个问题 用户可以自行保存这个Token拿来使用 虽然客户端已经删除掉了
+但是这个令牌仍然是可用的 如果用户私自保存过 那么依然可以正常使用这个令牌 这显然是有问题的
+
+目前两种比较好的方案:
+- 黑名单方案: 所有黑名单中的JWT将不可使用
+- 白名单方案: 不在白名单中的JWT将不可使用
+
+这里我们以黑名单机制为例 让用户退出登录之后 无法再次使用之前的JWT进行操作 首先我们需要给JWT额外添加一个用于判断的唯一标识符 这里就用UUID好了:
+
+```java
+                    public class JwtUtils {
+    
+                        private static final String key = "abcdefghijklmn";
+                    
+                        public static String createJwt(UserDetails user) {
+                            
+                            Algorithm algorithm = Algorithm.HMAC256(key);
+                            Calendar calendar = Calendar.getInstance();
+                            Date now = calendar.getTime();
+                            calendar.add(Calendar.SECOND, 3600 * 24 * 7);
+                            return JWT.create()
+                              		// 额外添加一个UUID用于记录黑名单 将其作为JWT的ID属性jti
+                              		.withJWTId(UUID.randomUUID().toString())
+                                    .withClaim("name", user.getUsername())
+                                    .withClaim("authorities", user.getAuthorities().stream().map(GrantedAuthority::getAuthority).toList())
+                                    .withExpiresAt(calendar.getTime())
+                                    .withIssuedAt(now)
+                                    .sign(algorithm);
+                            
+                        }
+                      
+                    		...
+    
+                    }
+```
+
+这样我们发出去的所有令牌都会携带一个UUID作为唯一凭据 接着我们可以创建一个专属的表用于存储黑名单:
+
+```java
+                    public class JwtUtils {	
+  
+                      private static final HashSet<String> blackList = new HashSet<>();
+                      // 加入黑名单方法
+                      public static boolean invalidate(String token) {
+                          
+                            Algorithm algorithm = Algorithm.HMAC256(key);
+                            JWTVerifier jwtVerifier = JWT.require(algorithm).build();
+                            try {
+                                DecodedJWT verify = jwtVerifier.verify(token);
+                                Map<String, Claim> claims = verify.getClaims();
+                              	// 取出UUID丢进黑名单中
+                                return blackList.add(verify.getId());
+                            } catch (JWTVerificationException e) {
+                                return false;
+                            }
+                            
+                      }
+                      
+                      ...
+                      
+                    	public static UserDetails resolveJwt(String token) {
+                          
+                            Algorithm algorithm = Algorithm.HMAC256(key);
+                            JWTVerifier jwtVerifier = JWT.require(algorithm).build();
+                            try {
+                                DecodedJWT verify = jwtVerifier.verify(token);
+                                // 判断是否存在于黑名单中 如果存在 则返回null表示失效
+                                if(blackList.contains(verify.getId()))
+                                    return null;
+                                Map<String, Claim> claims = verify.getClaims();
+                                if(new Date().after(claims.get("exp").asDate()))
+                                    return null;
+                                return User
+                                        .withUsername(claims.get("name").asString())
+                                        .password("")
+                                        .authorities(claims.get("authorities").asArray(String.class))
+                                        .build();
+                            } catch (JWTVerificationException e) {
+                                return null;
+                            }
+                            
+                        }
+                        
+                    }
+```
+
+接着我们来SecurityConfiguration中配置一下退出登录操作:
+
+```java
+                    private void onLogoutSuccess(HttpServletRequest request,
+                                                 HttpServletResponse response,
+                                                 Authentication authentication) throws IOException {
+    
+                            response.setContentType("application/json;charset=utf-8");
+                            PrintWriter writer = response.getWriter();
+                            String authorization = request.getHeader("Authorization");
+                            if(authorization != null && authorization.startsWith("Bearer ")) {
+                                String token = authorization.substring(7);
+                              	// 将Token加入黑名单
+                                if(JwtUtils.invalidate(token)) {
+                                  	// 只有成功加入黑名单才会退出成功
+                                    writer.write(RestBean.success("退出登录成功").asJsonString());
+                                    return;
+                                }
+                            }
+                            writer.write(RestBean.failure(400, "退出登录失败").asJsonString());
+                            
+                    }
+```
+
+这样 我们就成功安排上了黑名单机制 即使用户提前保存 这个Token依然是失效的:
+
+<img src="https://image.itbaima.net/markdown/2023/07/24/4o76q5yNHkabuip.png"/>
+
+虽然这种黑名单机制很方便 但是如果到了后面的微服务阶段 可能多个服务器都需要共享这个黑名单 这个时候我们再将黑名单存储在单个应用中就不太行了
+后续我们可以考虑使用Redis服务器来存放黑名单列表 这样就可以实现多个服务器共享 并且根据JWT的过期时间合理设定黑名单中UUID的过期时间 自动清理
+
+#### 自动续签JWT令牌
+在有些时候 我们可能希望用户能够一直使用我们的网站 而不是JWT令牌到期之后就需要重新登录 这种情况下前端就可以配置JWT自动续签
+在发起请求时如果令牌即将到期 那么就向后端发起续签请求得到一个新的JWT令牌
+
+这里我们写一个接口专门用于令牌刷新:
+
+```java
+                    @RestController
+                    @RequestMapping("/api/auth")
+                    public class AuthorizeController {
+                    
+                        @GetMapping("/refresh")
+                        public RestBean<String> refreshToken(){
+                            
+                            User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+                            String jwt = JwtUtils.createJwt(user);
+                            return RestBean.success(jwt);
+                            
+                        }
+                        
+                    }
+```
+
+这样 前端在发现令牌可用时间不足时 就会先发起一个请求自动完成续期 得到一个新的Token:
+
+
+
+
+
 
 
 

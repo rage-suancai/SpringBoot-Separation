@@ -63,7 +63,7 @@
                                 <a class="forgot-pws-btn" href="forgot-pws.html">Forgot Password?</a>
                             </div>
                             <div class="ad-auth-btn">
-                                <a href="javascript:login();" class="ad-btn ad-login-member">Login</a>
+                                <a href="javascript:loginByToken();" class="ad-btn ad-login-member">Login</a>
                             </div>
                             <p class="ad-register-text">Don't have an account? <a href="register.html">Click Here</a></p>
                         </form>
@@ -81,7 +81,7 @@
 
 <script>
 
-    function login() {
+    function loginBySession() {
         axios.post('http://localhost:8081/api/auth/login', {
             username: document.getElementById('username').value,
             password: document.getElementById('password').value
@@ -90,6 +90,22 @@
             withCredentials: true
         }).then(({data}) => {
             if (data.code === 200) {
+                window.location.href = '/index.html'
+            } else {
+                alert('登录失败: ' + data.message)
+            }
+        })
+    }
+
+    function loginByToken() {
+        axios.post("http://localhost:8081/api/auth/login", {
+            username: document.getElementById("username").value,
+            password: document.getElementById("password").value
+        }, {
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+        }).then(({data}) => {
+            if (data.code === 200) {
+                sessionStorage.setItem("access_token", data.data)
                 window.location.href = '/index.html'
             } else {
                 alert('登录失败: ' + data.message)

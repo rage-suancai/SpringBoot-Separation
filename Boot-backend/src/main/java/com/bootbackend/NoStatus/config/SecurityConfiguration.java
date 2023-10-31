@@ -37,8 +37,9 @@ public class SecurityConfiguration {
                     conf.successHandler(this::handleProcess);
                     conf.permitAll();
                 })
-                .sessionManagement(conf -> {
-                    conf.sessionCreationPolicy(SessionCreationPolicy.STATELESS);
+                .logout(conf -> {
+                    conf.logoutUrl("/api/auth/logout");
+                    conf.logoutSuccessHandler(this::onLogoutSuccess);
                 })
                 .exceptionHandling(conf -> {
                     conf.accessDeniedHandler(this::handleProcess);
@@ -46,11 +47,14 @@ public class SecurityConfiguration {
                 })
                 .cors(conf -> {
                     CorsConfiguration cors = new CorsConfiguration();
-                    cors.addAllowedOrigin("http://localhost:8080"); cors.setAllowCredentials(true);
+                    cors.addAllowedOrigin("http://localhost:8080"); cors.setAllowCredentials(false);
                     cors.addAllowedHeader("*"); cors.addAllowedMethod("*"); cors.addExposedHeader("*");
                     UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
                     source.registerCorsConfiguration("/**", cors);
                     conf.configurationSource(source);
+                })
+                .sessionManagement(conf -> {
+                    conf.sessionCreationPolicy(SessionCreationPolicy.STATELESS);
                 })
                 .addFilterBefore(new JwtAuthenticationFilter(), UsernamePasswordAuthenticationFilter.class)
                 .csrf(AbstractHttpConfigurer::disable)
@@ -62,8 +66,7 @@ public class SecurityConfiguration {
                                HttpServletResponse response,
                                Object exceptionOrAuthentication) throws IOException {
 
-        response.setContentType("application/json;charset=utf-8");
-        PrintWriter writer = response.getWriter();
+        response.setContentType("application/json;charset=utf-8"); PrintWriter writer = response.getWriter();
 
         if (exceptionOrAuthentication instanceof AccessDeniedException e)
             writer.write(RestBean17.failure(403, e.getMessage()).asJsonString());
@@ -71,6 +74,21 @@ public class SecurityConfiguration {
             writer.write(RestBean17.failure(401, e.getMessage()).asJsonString());
         else if (exceptionOrAuthentication instanceof Authentication authentication)
             writer.write(RestBean17.success(JwtUtils.createJwt((User) authentication.getPrincipal())).asJsonString());
+
+    }
+
+    private void onLogoutSuccess(HttpServletRequest request,
+                                 HttpServletResponse response,
+                                 Authentication authentication) throws IOException {
+
+        response.setContentType("application/json;charset=utf-8"); PrintWriter writer = response.getWriter();
+
+        String authorization = request.getHeader("Authorization");
+        if (authorization != null && authorization.startsWith("Bearer ")) {
+            String token = authorization.substring(7);
+            if (JwtUtils.invalidate(token)) writer.write(RestBean17.success("退出登录成功").asJsonString()); return;
+        }
+        writer.write(RestBean17.failure(400, "退出登录失败").asJsonString());
 
     }
 
